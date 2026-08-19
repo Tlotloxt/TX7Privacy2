@@ -29,22 +29,53 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Extract TX7 project
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p tx7_project
+
+          ZIP_FILE=$(find . -maxdepth 2 -type f -iname "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found."
+            exit 1
+          fi
+
+          echo "Found ZIP:"
+          echo "$ZIP_FILE"
+
+          unzip -o "$ZIP_FILE" -d tx7_project
+
+          echo "Extracted files:"
+          find tx7_project -maxdepth 4 -type f | head -100
+
       - name: Find Android project
         shell: bash
         run: |
           set -e
 
-          if [ -f "gradlew" ]; then
-            echo "PROJECT_DIR=." >> "$GITHUB_ENV"
-          elif [ -f "TX7Privacy_APK_Ready/gradlew" ]; then
-            echo "PROJECT_DIR=TX7Privacy_APK_Ready" >> "$GITHUB_ENV"
-          else
-            echo "Could not find gradlew."
-            find . -maxdepth 3 -type f -name gradlew -print
+          SETTINGS=$(find tx7_project -type f \( \
+            -name "settings.gradle" \
+            -o -name "settings.gradle.kts" \
+          \) | head -n 1)
+
+          if [ -z "$SETTINGS" ]; then
+            echo "ERROR: Android Gradle project not found."
+            echo "Searching extracted files:"
+            find tx7_project -maxdepth 5 -type f
             exit 1
           fi
 
-      - name: Force Java and Kotlin JVM target to 17
+          PROJECT_DIR=$(dirname "$SETTINGS")
+
+          echo "Android project found at:"
+          echo "$PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Force Java and Kotlin JVM 17
         shell: bash
         run: |
           cat > "$RUNNER_TEMP/tx7-jvm17.gradle" <<'EOF'
@@ -55,7 +86,8 @@ jobs:
               }
 
               tasks.matching {
-                  it.name.contains("Kotlin") && it.name.contains("Compile")
+                  it.name.contains("Kotlin") &&
+                  it.name.contains("Compile")
               }.configureEach {
                   try {
                       kotlinOptions.jvmTarget = "17"
@@ -65,14 +97,19 @@ jobs:
           }
           EOF
 
-      - name: Build debug APK
+      - name: Build TX7 Debug APK
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -e
-          chmod +x gradlew
 
-          ./gradlew \
+          echo "Building project in:"
+          pwd
+
+          echo "Project files:"
+          ls -la
+
+          gradle \
             --no-daemon \
             --stacktrace \
             -I "$RUNNER_TEMP/tx7-jvm17.gradle" \
@@ -82,15 +119,19 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
-          find app/build/outputs/apk \
+          set -e
+
+          echo "Searching for APK..."
+
+          find . \
             -type f \
             -name "*.apk" \
             -print
 
-      - name: Upload APK
+      - name: Upload TX7 APK
         uses: actions/upload-artifact@v4
         with:
           name: TX7-APK
           path: |
-            ${{ env.PROJECT_DIR }}/app/build/outputs/apk/**/*.apk
+            tx7_project/**/build/outputs/apk/**/*.apk
           if-no-files-found: error
